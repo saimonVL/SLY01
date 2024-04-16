@@ -26,7 +26,7 @@
 
     let saRPCs = [
         'https://rpc.hellomoon.io/10b04e58-1100-43a3-bcf5-b3ec3b2c006d', //Hello Moon
-        'https://solana-mainnet.g.alchemy.com/v2/3yxV0amklRaKIUZ49-bnDTsds5IysZ1y', //Alchemy
+        
         ];
     let readRPCs = customReadRPCs.concat(saRPCs);
     let writeRPCs = customWriteRPCs.concat(saRPCs);
