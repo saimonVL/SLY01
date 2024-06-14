@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         SLY Assistant
 // @namespace    http://tampermonkey.net/
-// @version      0.6.4
+// @version      0.6.10
 // @description  try to take over the world!
-// @author       SLY w/ Contributions by niofox, SkyLove512, anthonyra
+// @author       SLY w/ Contributions by niofox, SkyLove512, anthonyra, [AEP] Valkynen
 // @match        https://*.based.staratlas.com/
 // @require      https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js
 // @require      https://raw.githubusercontent.com/saimonVL/SLY01/main/anchor-browserified.js
@@ -16,24 +16,21 @@
 // ==/UserScript==
 
 (async function() {
-	'use strict';
+    'use strict';
 
-	//Used for reading solana data
-	let customReadRPCs = [];
+    //Used for reading solana data
+    let customReadRPCs = [];
 
-	//Used for pushing transactions to solana chain
-	let customWriteRPCs = [];
+    //Used for pushing transactions to solana chain
+    let customWriteRPCs = [];
 
     let saRPCs = [
-        'https://twilight-autumn-diagram.solana-mainnet.quiknode.pro/4fc53d638efd1cc0f80764bc457944bb325d1ff1', //Quicknode
-		'https://rpc.hellomoon.io/57dbc69d-7e66-4454-b33e-fa6a4b46170f', //Hello Moon
-        'https://staratl-mainc06-2415.mainnet.rpcpool.com', //Triton
-        //'https://mainnet.helius-rpc.com/?api-key=735486d8-ae86-4d26-829c-e34a2210d119', //Helius
-	];
+        'https://rpc.ironforge.network/mainnet?apiKey=01HZFVRZ4A5WVX2NDA4PCPHJ7N',
+    ];
     let readRPCs = customReadRPCs.concat(saRPCs);
     let writeRPCs = customWriteRPCs.concat(saRPCs);
 
-	//Program public keys
+    //Program public keys
     /*
 	const sageProgramPK = new solanaWeb3.PublicKey('SAGEqqFewepDHH6hMDcmWy7yjHPpyKLDnRXKb3Ki8e6');
 	const profileProgramPK = new solanaWeb3.PublicKey('pprofELXjL5Kck7Jn5hCpwAL82DpTkSYBENzahVtbc9');
@@ -41,9 +38,9 @@
 	const profileFactionProgramPK = new solanaWeb3.PublicKey('pFACSRuobDmvfMKq1bAzwj27t6d2GJhSCHb1VcfnRmq');
     */
     const sageProgramPK = new solanaWeb3.PublicKey('SAGE2HAwep459SNq61LHvjxPk4pLPEJLoMETef7f7EE');
-	const profileProgramPK = new solanaWeb3.PublicKey('pprofELXjL5Kck7Jn5hCpwAL82DpTkSYBENzahVtbc9');
-	const cargoProgramPK = new solanaWeb3.PublicKey('Cargo2VNTPPTi9c1vq1Jw5d3BWUNr18MjRtSupAghKEk');
-	const profileFactionProgramPK = new solanaWeb3.PublicKey('pFACSRuobDmvfMKq1bAzwj27t6d2GJhSCHb1VcfnRmq');
+    const profileProgramPK = new solanaWeb3.PublicKey('pprofELXjL5Kck7Jn5hCpwAL82DpTkSYBENzahVtbc9');
+    const cargoProgramPK = new solanaWeb3.PublicKey('Cargo2VNTPPTi9c1vq1Jw5d3BWUNr18MjRtSupAghKEk');
+    const profileFactionProgramPK = new solanaWeb3.PublicKey('pFACSRuobDmvfMKq1bAzwj27t6d2GJhSCHb1VcfnRmq');
     const craftingProgramPK = new solanaWeb3.PublicKey('CRAFT2RPXPJWCEix4WpJST3E7NLf79GTqZUL75wngXo5');
     const pointsProgramId = new solanaWeb3.PublicKey('Point2iBvz7j5TMVef8nEgpmz4pDr7tU7v3RjAfkQbM');
     const dataRunningXpCategory = new solanaWeb3.PublicKey('DataJpxFgHhzwu4zYJeHCnAv21YqWtanEBphNxXBHdEY');
@@ -113,6 +110,12 @@
 
 			//How much console logging you want to see (higher number = more, 0 = none)
 			debugLogLevel: parseIntDefault(globalSettings.debugLogLevel, 3),
+
+            //The number of crafting jobs enabled in config
+            craftingJobs: parseIntDefault(globalSettings.craftingJobs, 4),
+
+            //Subwarp when the distance is 1 diagonal sector or less
+            subwarpShortDist: parseBoolDefault(globalSettings.subwarpShortDist, true),
 
 			//Determines if your transports should use their ammo banks to move ammo (in addition to their cargo holds)
 			transportUseAmmoBank: parseBoolDefault(globalSettings.transportUseAmmoBank, true),
@@ -286,6 +289,9 @@
         userCraftingXpAccounts: {},
         userLPAccounts: {},
     };
+    let starbaseData = [];
+    let planetData = [];
+    let starbasePlayerData = [];
 
 	let sageProgram = new BrowserAnchor.anchor.Program(sageIDL, sageProgramPK, anchorProvider);
 	let [sageGameAcct] = await sageProgram.account.game.all();
@@ -569,18 +575,37 @@
 		const realWarpRange = warpRange / 100;
 		const warpCount = realWarpRange > 0 ? moveDist / realWarpRange : 1;
 
-		if(warpCount < 1) return endCoords; //In range for single jump?
+		if(warpCount <= 1) return endCoords; // In range for single jump?
 
-		//Calculate raw distance
-		let dx = (endX - startX) / warpCount;
-		let dy = (endY - startY) / warpCount;
+        // Calculate raw distance
+        let slope = Math.abs(endX - startX) > 0 ? Math.abs((endY - startY) / (endX - startX)) : Math.abs((endY - startY));
+        let dx = realWarpRange / Math.sqrt(slope ** 2 + 1);
+        let dy = dx * slope;
 
-		//Refine distance
-		dx = dx > 0 ? Math.floor(dx) : Math.ceil(dx);
-		dy = dy > 0 ? Math.floor(dy) : Math.ceil(dy);
+        // Calculate the middle point destination
+        let intX = startX > endX ? startX - parseInt(dx) : startX + parseInt(dx);
+        let intY = startY > endY ? startY - parseInt(dy) : startY + parseInt(dy);
+        let potentialCoords = [[intX,intY],[intX-1,intY-1],[intX-1,intY],[intX-1,intY+1],[intX,intY-1],[intX,intY+1],[intX+1,intY-1],[intX+1,intY],[intX+1,intY+1]];
+
+        // Determine the optimal route based on total jumps and total distance
+        let bestCoords = potentialCoords.reduce((best, val) => {
+            let remainingDistOld = Math.sqrt((best[0] - endX) ** 2 + (best[1] - endY) ** 2);
+            let remainingDistNew = Math.sqrt((val[0] - endX) ** 2 + (val[1] - endY) ** 2);
+            let travelDistOld = Math.sqrt((startX - best[0]) ** 2 + (startY - best[1]) ** 2);
+            let travelDistNew = Math.sqrt((startX - val[0]) ** 2 + (startY - val[1]) ** 2);
+            if (remainingDistNew < realWarpRange && travelDistNew < realWarpRange && remainingDistNew+travelDistNew < remainingDistOld+travelDistOld) {
+                return val;
+            } else if (remainingDistNew < realWarpRange && travelDistNew < realWarpRange && remainingDistOld > realWarpRange) {
+                return val;
+            } else if (remainingDistNew > realWarpRange && travelDistNew < realWarpRange && remainingDistNew < remainingDistOld) {
+                return val;
+            } else if (travelDistOld < realWarpRange) {
+                return best;
+            }
+        });
 
 		//Calculate and return waypoint coordinates
-		return [startX + dx, startY + dy];
+		return bestCoords;
 	}
 
 	function calcWarpFuelReq(fleet, startCoords, endCoords) {
@@ -642,7 +667,7 @@
         });
     }
 
-    async function getStarbaseFromCoords(x, y) {
+    async function getStarbaseFromCoords(x, y, getLive = false) {
         return new Promise(async resolve => {
             let xBN = new BrowserAnchor.anchor.BN(x);
             let xArr = xBN.toTwos(64).toArrayLike(BrowserBuffer.Buffer.Buffer, "le", 8);
@@ -650,66 +675,93 @@
             let yBN = new BrowserAnchor.anchor.BN(y);
             let yArr = yBN.toTwos(64).toArrayLike(BrowserBuffer.Buffer.Buffer, "le", 8);
             let y58 = bs58.encode(yArr);
-            let [starbase] = await sageProgram.account.starbase.all([
-                {
-                    memcmp: {
-                        offset: 41,
-                        bytes: x58
-                    }
-                },
-                {
-                    memcmp: {
-                        offset: 49,
-                        bytes: y58
-                    }
-                },
-            ]);
+
+            let cachedStarbase = starbaseData.find(item => item.coords[0] == x && item.coords[1] == y);
+            let starbase = cachedStarbase && cachedStarbase.starbase;
+            let needUpdate = cachedStarbase && Date.now() - cachedStarbase.lastUpdated > 1000*60*60*24 ? true : false;
+
+            if (!starbase || needUpdate || getLive) {
+                [starbase] = await sageProgram.account.starbase.all([
+                    {
+                        memcmp: {
+                            offset: 41,
+                            bytes: x58
+                        }
+                    },
+                    {
+                        memcmp: {
+                            offset: 49,
+                            bytes: y58
+                        }
+                    },
+                ]);
+                starbaseData.push({coords: [x,y], lastUpdated: Date.now(), starbase: starbase});
+            }
+
             resolve(starbase);
         });
     }
 
-	async function getPlanetsFromCoords(x, y) {
-			return new Promise(async resolve => {
-					let xBN = new BrowserAnchor.anchor.BN(x);
-					let xArr = xBN.toTwos(64).toArrayLike(BrowserBuffer.Buffer.Buffer, "le", 8);
-					let x58 = bs58.encode(xArr);
-					let yBN = new BrowserAnchor.anchor.BN(y);
-					let yArr = yBN.toTwos(64).toArrayLike(BrowserBuffer.Buffer.Buffer, "le", 8);
-					let y58 = bs58.encode(yArr);
-					let planets = await sageProgram.account.planet.all([
-							{
-									memcmp: {
-											offset: 105,
-											bytes: x58
-									}
-							},
-							{
-									memcmp: {
-											offset: 113,
-											bytes: y58
-									}
-							},
-					]);
-					resolve(planets);
-			});
-	}
+    async function getPlanetsFromCoords(x, y) {
+        return new Promise(async resolve => {
+            let xBN = new BrowserAnchor.anchor.BN(x);
+            let xArr = xBN.toTwos(64).toArrayLike(BrowserBuffer.Buffer.Buffer, "le", 8);
+            let x58 = bs58.encode(xArr);
+            let yBN = new BrowserAnchor.anchor.BN(y);
+            let yArr = yBN.toTwos(64).toArrayLike(BrowserBuffer.Buffer.Buffer, "le", 8);
+            let y58 = bs58.encode(yArr);
+
+            let cachedPlanet = planetData.find(item => item.coords[0] == x && item.coords[1] == y);
+            let planets = cachedPlanet && cachedPlanet.planets;
+            let needUpdate = cachedPlanet && Date.now() - cachedPlanet.lastUpdated > 1000*60*60*24 ? true : false;
+
+            if (!planets || needUpdate) {
+                planets = await sageProgram.account.planet.all([
+                    {
+                        memcmp: {
+                            offset: 105,
+                            bytes: x58
+                        }
+                    },
+                    {
+                        memcmp: {
+                            offset: 113,
+                            bytes: y58
+                        }
+                    },
+                ]);
+                planetData.push({coords: [x,y], lastUpdated: Date.now(), planets: planets});
+            }
+
+            resolve(planets);
+        });
+    }
 
     async function getStarbasePlayer(userProfile, starbase) {
         return new Promise(async resolve => {
-            let [starbasePlayer] = await sageProgram.account.starbasePlayer.all([
-                {
-                    memcmp: {
-                        offset: 9,
-                        bytes: userProfile.toBase58()
-                    }
-                },
-                {
-                    memcmp: {
-                        offset: 73,
-                        bytes: starbase.toBase58()
-                    }
-                },
-            ]);
+            //starbasePlayerData
+            let cachedStarbasePlayer = starbasePlayerData.find(item => item.userProfile == userProfile.toBase58() && item.starbase == starbase.toBase58());
+            let starbasePlayer = cachedStarbasePlayer && cachedStarbasePlayer.starbasePlayer;
+            let needUpdate = cachedStarbasePlayer && Date.now() - cachedStarbasePlayer.lastUpdated > 1000*60*60*24 ? true : false;
+
+            if (!starbasePlayer || needUpdate) {
+                [starbasePlayer] = await sageProgram.account.starbasePlayer.all([
+                    {
+                        memcmp: {
+                            offset: 9,
+                            bytes: userProfile.toBase58()
+                        }
+                    },
+                    {
+                        memcmp: {
+                            offset: 73,
+                            bytes: starbase.toBase58()
+                        }
+                    },
+                ]);
+                starbasePlayerData.push({userProfile: userProfile.toBase58(), starbase: starbase.toBase58(), lastUpdated: Date.now(), starbasePlayer: starbasePlayer});
+            }
+
             resolve(starbasePlayer);
         });
     }
@@ -869,6 +921,9 @@
 		txHash = await solanaWriteConnection.sendRawTransaction(txSerialized, {skipPreflight: true, maxRetries: 0, preflightCommitment: 'confirmed'});
         cLog(3,`${FleetTimeStamp(fleet.label)} <${opName}> txHash`, txHash);
 
+        // Force a retry if txHash is undefined. Not sure why sendRawTransaction would return nothing, but this happens occasionally.
+        if (!txHash) return {txHash, confirmation: {name: 'TransactionExpiredBlockheightExceededError'}};
+
 		while ((curBlockHeight - interimBlockHeight) < 10) {
 				const signatureStatus = await solanaReadConnection.getSignatureStatus(txHash);
 				if (signatureStatus.value && ['confirmed','finalized'].includes(signatureStatus.value.confirmationStatus)) {
@@ -971,6 +1026,7 @@
 				}
 
 				if(tryCount > 1) cLog(3, `${FleetTimeStamp(fleetName)} Got txResult in ${tryCount} tries`, txResult);
+                cLog(4, `${FleetTimeStamp(fleetName)} txResult`, txResult);
 				cLog(2,`${FleetTimeStamp(fleetName)} <${opName}> CONFIRM ✅ ${confirmationTimeStr}`);
 				confirmed = true;
 
@@ -1727,7 +1783,7 @@
             let targetX = fleet.destCoord.split(',')[0].trim();
             let targetY = fleet.destCoord.split(',')[1].trim();
             let starbase = await getStarbaseFromCoords(targetX, targetY);
-            let starbasePlayer = await getStarbasePlayer(userProfileAcct,starbase.publicKey);
+            //let starbasePlayer = await getStarbasePlayer(userProfileAcct,starbase.publicKey);
 
             let [planetResourceToken] = await BrowserAnchor.anchor.web3.PublicKey.findProgramAddressSync(
                 [
@@ -2088,7 +2144,6 @@
                 }];
 
             if (craftRecipes.some(item => item.name === craftingRecipe.name)) {
-                console.log('HERE');
                 let [craftingAtlasToken] = await BrowserAnchor.anchor.web3.PublicKey.findProgramAddressSync(
                     [
                         craftingProcess.toBuffer(),
@@ -3248,6 +3303,8 @@
             savedProfile: saveProfile ? (userProfileAcct && userProfileKeyIdx) ? [userProfileAcct.toString(), userProfileKeyIdx] : [] : [],
 			confirmationCheckingDelay: parseIntDefault(document.querySelector('#confirmationCheckingDelay').value, 200),
 			debugLogLevel: parseIntDefault(document.querySelector('#debugLogLevel').value, 3),
+            craftingJobs: parseIntDefault(document.querySelector('#craftingJobs').value, 4),
+			subwarpShortDist: document.querySelector('#subwarpShortDist').checked,
 			transportUseAmmoBank: document.querySelector('#transportUseAmmoBank').checked,
 			transportStopOnError: document.querySelector('#transportStopOnError').checked,
 			scanBlockPattern: scanBlockPattern ? scanBlockPattern : 'square',
@@ -3278,6 +3335,8 @@
         document.querySelector('#saveProfile').checked = globalSettings.saveProfile;
 		document.querySelector('#confirmationCheckingDelay').value = globalSettings.confirmationCheckingDelay;
 		document.querySelector('#debugLogLevel').value = globalSettings.debugLogLevel;
+        document.querySelector('#craftingJobs').value = globalSettings.craftingJobs;
+		document.querySelector('#subwarpShortDist').checked = globalSettings.subwarpShortDist;
 		document.querySelector('#transportUseAmmoBank').checked = globalSettings.transportUseAmmoBank;
 		document.querySelector('#transportStopOnError').checked = globalSettings.transportStopOnError;
 		document.querySelector('#scanBlockPattern').value = globalSettings.scanBlockPattern;
@@ -3312,7 +3371,7 @@
 			document.querySelectorAll('#assistModal .assist-transport-row').forEach(e => e.remove());
             document.querySelectorAll('#assistModal .assist-craft-row').forEach(e => e.remove());
 			for (let fleet of userFleets) addAssistInput(fleet);
-            for (let i=1; i < 5; i++) addCraftingInput(i);
+            for (let i=1; i < globalSettings.craftingJobs+1; i++) addCraftingInput(i);
 			targetElem.style.display = 'block';
 		} else {
 			targetElem.style.display = 'none';
@@ -3342,6 +3401,34 @@
                 let destY = userFleet.destCoord.split(',')[1].trim();
                 let starbaseX = userFleet.starbaseCoord.split(',')[0].trim();
                 let starbaseY = userFleet.starbaseCoord.split(',')[1].trim();
+
+                // testing
+                // ---------------------------------
+                let starbase = await getStarbaseFromCoords(destX, destY);
+                console.log('starbase: ', starbase);
+
+                let starbasePlayer = await getStarbasePlayer(userProfileAcct, starbase.publicKey);
+                console.log('starbasePlayer: ', starbasePlayer);
+
+                let ships = [];
+                let starbasePlayerAcctInfo = await solanaReadConnection.getAccountInfo(starbasePlayer.publicKey);
+                let shipData = starbasePlayerAcctInfo.data.subarray(170);
+                let shipIter = 0;
+                while (shipData.length >= 48) {
+                    let currShip = shipData.subarray(0, 48);
+                    let shipDecoded = sageProgram.coder.types.decode('WrappedShipEscrow', currShip);
+                    ships.push({publicKey: shipDecoded.ship, amount: shipDecoded.amount.toNumber(), idx: shipIter});
+                    shipData = shipData.subarray(48);
+                    shipIter += 1;
+                }
+                console.log('ships: ', ships);
+                for (let ship of ships) {
+                    let shipDecoded = await sageProgram.account.ship.fetch(ship.publicKey);
+                    console.log('shipDecoded: ', shipDecoded);
+                    let shipName = (new TextDecoder("utf-8").decode(new Uint8Array(shipDecoded.name))).replace(/\0/g, '');
+                    console.log(shipName);
+                }
+                // ---------------------------------
                 let [mineItem] = await sageProgram.account.mineItem.all([
                     {
                         memcmp: {
@@ -3524,8 +3611,9 @@
 				let currentCargoFuel = fleetCurrentCargo.value.find(item => item.account.data.parsed.info.mint === sageGameAcct.account.mints.fuel.toString());
 				let currentCargoFuelCnt = currentCargoFuel ? currentCargoFuel.account.data.parsed.info.tokenAmount.uiAmount : 0;
 
+                let shortSubwarp = moveDist < 1.5 && globalSettings.subwarpShortDist ? true : false;
 				//Should a warp be attempted?
-				if (userFleets[i].moveType == 'warp' && (currentFuelCnt + currentCargoFuelCnt) >= warpCost) {
+				if (userFleets[i].moveType == 'warp' && (currentFuelCnt + currentCargoFuelCnt) >= warpCost && !shortSubwarp) {
 					let fleetAcctData = sageProgram.coder.accounts.decode('fleet', fleetAcctInfo.data);
 					let warpCooldownExpiresAt = fleetAcctData.warpCooldownExpiresAt.toNumber() * 1000;
 
@@ -4155,6 +4243,34 @@
 		return false;
 	}
 
+    async function checkCargo(currentManifest, destinationManifest, fleet) {
+        const fleetCurrentCargo = await solanaReadConnection.getParsedTokenAccountsByOwner(fleet.cargoHold, {programId: tokenProgramPK});
+        const cargoCnt = fleetCurrentCargo.value.reduce((n, {account}) => n + account.data.parsed.info.tokenAmount.uiAmount * cargoItems.find(r => r.token == account.data.parsed.info.mint).size, 0);
+        let needToLoad = false;
+        let needToUnload = false;
+        for (const entry of destinationManifest) {
+            if (entry.res && entry.amt > 0) {
+                let currentCargoObj = fleetCurrentCargo.value.find(item => item.account.data.parsed.info.mint === entry.res);
+                let currentCargoResAmt = currentCargoObj ? currentCargoObj.account.data.parsed.info.tokenAmount.uiAmount : 0;
+                if (currentCargoResAmt < entry.amt) needToLoad = true;
+                if (currentCargoResAmt > entry.amt) {
+                    needToUnload = true;
+                    currentManifest.push({res: entry.res, amt: currentCargoResAmt - entry.amt, extra: true});
+                }
+            }
+        }
+
+        for (const entry of currentManifest) {
+            if (entry.res && entry.amt > 0) {
+                let currentCargoObj = fleetCurrentCargo.value.find(item => item.account.data.parsed.info.mint === entry.res);
+                let currentCargoResAmt = currentCargoObj ? currentCargoObj.account.data.parsed.info.tokenAmount.uiAmount : 0;
+                if (currentCargoResAmt > 0) needToUnload = true;
+            }
+        }
+
+        return {currentManifest, destinationManifest, needToLoad, needToUnload};
+    }
+
     async function handleTransport(i, fleetState, fleetCoords) {
         const [destX, destY] = ConvertCoords(userFleets[i].destCoord);
         const [starbaseX, starbaseY] = ConvertCoords(userFleets[i].starbaseCoord);
@@ -4180,79 +4296,101 @@
             // Fleet at starbase?
             if (fleetCoords[0] == starbaseX && fleetCoords[1] == starbaseY) {
                 userFleets[i].resupplying = true;
-                await execDock(userFleets[i], userFleets[i].starbaseCoord);
 
-                if (hasStarbaseManifest) {
-                    await handleTransportUnloading(userFleets[i], userFleets[i].starbaseCoord, starbaseCargoManifest);
-                } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Unloading skipped - No resources specified`);
+                let checkCargoResult = await checkCargo(starbaseCargoManifest, targetCargoManifest, userFleets[i]);
+                console.log('checkCargoResult: ', checkCargoResult);
+                starbaseCargoManifest = checkCargoResult.currentManifest;
+                targetCargoManifest = checkCargoResult.destinationManifest;
 
-                //Refeuling at Starbase
-                let refuelResp = await handleTransportRefueling(userFleets[i], userFleets[i].starbaseCoord, [starbaseX, starbaseY], [destX, destY], true, 0, targetCargoManifest);
-                if (refuelResp.status === 0) {
-                    userFleets[i].state = refuelResp.detail;
-                    return;
-                }
-                console.log('refuelResp: ', refuelResp);
+                if (checkCargoResult.needToLoad || checkCargoResult.needToUnload) {
+                    await execDock(userFleets[i], userFleets[i].starbaseCoord);
 
-                let fuelIndex = targetCargoManifest.findIndex(e => e.res === sageGameAcct.account.mints.fuel.toString());
-                if (fuelIndex > -1) {
-                    targetCargoManifest[fuelIndex].amt = targetCargoManifest[fuelIndex].amt - refuelResp.amount;
-                }
+                    if (hasStarbaseManifest || checkCargoResult.needToUnload) {
+                        await handleTransportUnloading(userFleets[i], userFleets[i].starbaseCoord, starbaseCargoManifest);
+                    } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Unloading skipped - No resources specified`);
 
-                //Loading at Starbase
-                if (hasTargetManifest) {
-                    const loadedCargo = await handleTransportLoading(i, userFleets[i].starbaseCoord, targetCargoManifest);
-                    if(!loadedCargo && globalSettings.transportStopOnError) {
-                        //const newFleetState = `ERROR: No more cargo to load`;
-                        //cLog(1,`${FleetTimeStamp(userFleets[i].label)} ${newFleetState}`);
-                        //userFleets[i].state = newFleetState;
+                    //Refeuling at Starbase
+                    let refuelResp = await handleTransportRefueling(userFleets[i], userFleets[i].starbaseCoord, [starbaseX, starbaseY], [destX, destY], true, 0, targetCargoManifest);
+                    if (refuelResp.status === 0) {
+                        userFleets[i].state = refuelResp.detail;
                         return;
                     }
-                } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Loading skipped - No resources specified`);
 
-                await execUndock(userFleets[i], userFleets[i].starbaseCoord);
+                    let fuelIndex = targetCargoManifest.findIndex(e => e.res === sageGameAcct.account.mints.fuel.toString());
+                    if (fuelIndex > -1) {
+                        targetCargoManifest[fuelIndex].amt = targetCargoManifest[fuelIndex].amt - refuelResp.amount;
+                    }
+
+                    //Loading at Starbase
+                    if (hasTargetManifest) {
+                        const loadedCargo = await handleTransportLoading(i, userFleets[i].starbaseCoord, targetCargoManifest);
+                        cLog(4,`${FleetTimeStamp(userFleets[i].label)} loadedCargo: `, loadedCargo);
+                        if(!loadedCargo && globalSettings.transportStopOnError) {
+                            //const newFleetState = `ERROR: No more cargo to load`;
+                            //cLog(1,`${FleetTimeStamp(userFleets[i].label)} ${newFleetState}`);
+                            //userFleets[i].state = newFleetState;
+                            cLog(1,`${FleetTimeStamp(userFleets[i].label)} ERROR: Unexpected error on cargo load.`);
+                            return;
+                        }
+                    } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Loading skipped - No resources specified`);
+
+                    let undockResult = await execUndock(userFleets[i], userFleets[i].starbaseCoord);
+                    cLog(4,`${FleetTimeStamp(userFleets[i].label)} userFleets[i]: `, undockResult);
+                    let fleetState = await solanaReadConnection.getAccountInfoAndContext(userFleets[i].publicKey, {minContextSlot: undockResult.slot});
+                }
                 userFleets[i].moveTarget = userFleets[i].destCoord;
                 userFleets[i].resupplying = false;
+                cLog(3,`${FleetTimeStamp(userFleets[i].label)} userFleets[i]: `, userFleets[i]);
             }
 
             // Fleet at target?
             else if (fleetCoords[0] == destX && fleetCoords[1] == destY) {
                 userFleets[i].resupplying = true;
-                await execDock(userFleets[i], userFleets[i].destCoord);
 
-                //Unloading at Target
-                let fuelUnloadDeficit = 0; //How far short of the manifest was the amount of fuel unloaded?
-                if (hasTargetManifest) {
-                    const unloadResult = await handleTransportUnloading(userFleets[i], userFleets[i].destCoord, targetCargoManifest);
-                    fuelUnloadDeficit = unloadResult.fuelUnloadDeficit;
-                } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Unloading skipped - No resources specified`);
+                let checkCargoResult = await checkCargo(targetCargoManifest, starbaseCargoManifest, userFleets[i]);
+                console.log('checkCargoResult: ', checkCargoResult);
+                targetCargoManifest = checkCargoResult.currentManifest;
+                starbaseCargoManifest = checkCargoResult.destinationManifest;
 
-                //Refueling at Target
-                let refuelResp = await handleTransportRefueling(userFleets[i], userFleets[i].destCoord, [destX, destY], [starbaseX, starbaseY], false, fuelUnloadDeficit, starbaseCargoManifest);
-                if (refuelResp.status === 0) {
-                    userFleets[i].state = refuelResp.detail;
-                    return;
-                }
+                if (checkCargoResult.needToLoad || checkCargoResult.needToUnload) {
+                    await execDock(userFleets[i], userFleets[i].destCoord);
 
-                let fuelIndex = starbaseCargoManifest.findIndex(e => e.res === sageGameAcct.account.mints.fuel.toString());
-                if (fuelIndex > -1) {
-                    starbaseCargoManifest[fuelIndex].amt = starbaseCargoManifest[fuelIndex].amt - refuelResp.amount;
-                }
+                    //Unloading at Target
+                    let fuelUnloadDeficit = 0; //How far short of the manifest was the amount of fuel unloaded?
+                    if (hasTargetManifest || checkCargoResult.needToUnload) {
+                        const unloadResult = await handleTransportUnloading(userFleets[i], userFleets[i].destCoord, targetCargoManifest);
+                        fuelUnloadDeficit = unloadResult.fuelUnloadDeficit;
+                    } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Unloading skipped - No resources specified`);
 
-                //Loading at Target
-                if(hasStarbaseManifest) {
-                    const loadedCargo = await handleTransportLoading(i, userFleets[i].destCoord, starbaseCargoManifest);
-                    cLog(1,`${FleetTimeStamp(userFleets[i].label)} loadedCargo: `, loadedCargo);
-                    if(!loadedCargo && globalSettings.transportStopOnError) {
-                        //const newFleetState = `ERROR: No more cargo to load`;
-                        //cLog(1,`${FleetTimeStamp(userFleets[i].label)} ${newFleetState}`);
-                        //userFleets[i].state = newFleetState;
-                        cLog(1,`${FleetTimeStamp(userFleets[i].label)} ERROR: Unexpected error on cargo load.`);
+                    //Refueling at Target
+                    let refuelResp = await handleTransportRefueling(userFleets[i], userFleets[i].destCoord, [destX, destY], [starbaseX, starbaseY], false, fuelUnloadDeficit, starbaseCargoManifest);
+                    if (refuelResp.status === 0) {
+                        userFleets[i].state = refuelResp.detail;
                         return;
                     }
-                } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Loading skipped - No resources specified`);
 
-                await execUndock(userFleets[i], userFleets[i].destCoord);
+                    let fuelIndex = starbaseCargoManifest.findIndex(e => e.res === sageGameAcct.account.mints.fuel.toString());
+                    if (fuelIndex > -1) {
+                        starbaseCargoManifest[fuelIndex].amt = starbaseCargoManifest[fuelIndex].amt - refuelResp.amount;
+                    }
+
+                    //Loading at Target
+                    if(hasStarbaseManifest) {
+                        const loadedCargo = await handleTransportLoading(i, userFleets[i].destCoord, starbaseCargoManifest);
+                        cLog(4,`${FleetTimeStamp(userFleets[i].label)} loadedCargo: `, loadedCargo);
+                        if(!loadedCargo && globalSettings.transportStopOnError) {
+                            //const newFleetState = `ERROR: No more cargo to load`;
+                            //cLog(1,`${FleetTimeStamp(userFleets[i].label)} ${newFleetState}`);
+                            //userFleets[i].state = newFleetState;
+                            cLog(1,`${FleetTimeStamp(userFleets[i].label)} ERROR: Unexpected error on cargo load.`);
+                            return;
+                        }
+                    } else cLog(1,`${FleetTimeStamp(userFleets[i].label)} Loading skipped - No resources specified`);
+
+                    let undockResult = await execUndock(userFleets[i], userFleets[i].destCoord);
+                    cLog(4,`${FleetTimeStamp(userFleets[i].label)} userFleets[i]: `, undockResult);
+                    let fleetState = await solanaReadConnection.getAccountInfoAndContext(userFleets[i].publicKey, {minContextSlot: undockResult.slot});
+                }
                 userFleets[i].moveTarget = userFleets[i].starbaseCoord;
                 userFleets[i].resupplying = false;
                 cLog(3,`${FleetTimeStamp(userFleets[i].label)} userFleets[i]: `, userFleets[i]);
@@ -4390,7 +4528,7 @@
 
 				if(isFuel) fuelUnloadDeficit = entry.amt;
                 if(isAmmo) ammoUnloadDeficit = entry.amt;
-				const amountToUnload = Math.min(currentResCnt, entry.amt);
+				const amountToUnload = entry.extra ? Math.min(currentResCnt, entry.amt) : currentResCnt;
 				if (amountToUnload > 0) {
 					cLog(1,`${FleetTimeStamp(fleet.label)} Unloading ${amountToUnload} ${entry.res}`);
 					await execCargoFromFleetToStarbase(fleet, fleet.cargoHold, entry.res, starbaseCoord, amountToUnload);
@@ -4433,6 +4571,8 @@
         const fleetCurrentCargo = await solanaReadConnection.getParsedTokenAccountsByOwner(userFleets[i].cargoHold, {programId: tokenProgramPK});
         const cargoCnt = fleetCurrentCargo.value.reduce((n, {account}) => n + account.data.parsed.info.tokenAmount.uiAmount * cargoItems.find(r => r.token == account.data.parsed.info.mint).size, 0);
         let cargoSpace = userFleets[i].cargoCapacity - cargoCnt;
+        const startingCargoSpace = cargoSpace;
+        let expectedCnt = 0;
         cLog(2,`${FleetTimeStamp(userFleets[i].label)} cargoSpace remaining: ${cargoSpace}`);
 
 		for (const entry of transportManifest) {
@@ -4453,10 +4593,12 @@
 				const currentRes = fleetCurrentCargo.value.find(item => item.account.data.parsed.info.mint === entry.res);
 				const fleetResAcct = currentRes ? currentRes.pubkey : fleetResourceToken;
 				const resCargoTypeAcct = cargoTypes.find(item => item.account.mint.toString() == entry.res);
+                const currentResAmt = currentRes ? currentRes.account.data.parsed.info.tokenAmount.uiAmount : 0;
 
 				//Deduct ammo already loaded into ammobank if applicable
 				const isAmmo = entry.res === sageGameAcct.account.mints.ammo.toString();
-				const resMax = Math.floor(Math.min(cargoSpace / cargoItems.find(r => r.token == entry.res).size, isAmmo ? entry.amt - ammoLoadingIntoAmmoBank : entry.amt));
+				const resMax = Math.floor(Math.min(cargoSpace / cargoItems.find(r => r.token == entry.res).size, isAmmo ? entry.amt - ammoLoadingIntoAmmoBank : entry.amt - currentResAmt));
+                expectedCnt += resMax;
 				if (resMax > 0) {
 					cLog(1,`${FleetTimeStamp(userFleets[i].label)} Attempting to load ${resMax} ${entry.res} from ${starbaseCoords}`);
 					const resp = await execCargoFromStarbaseToFleet(
@@ -4484,6 +4626,11 @@
 		//const cargoCnt = fleetCurrentCargo.value.reduce((n, {account}) => n + account.data.parsed.info.tokenAmount.uiAmount, 0);
 
 		//cLog(3,`${FleetTimeStamp(userFleets[i].label)} Loading finished with ${cargoCnt} total cargo loaded`);
+
+        if (startingCargoSpace == cargoSpace && expectedCnt > 0) {
+            updateFleetState(userFleets[i], 'ERROR: No cargo loaded');
+            cLog(2,`${FleetTimeStamp(userFleets[i].label)} ERROR: No cargo loaded`);
+        }
 		return !userFleets[i].state.includes('ERROR');
 	}
 
@@ -4664,7 +4811,8 @@
             let starbasePlayerCargoHold = getStarbasePlayerCargoMaxItem(starbasePlayerCargoHoldsAndTokens, input.mint.toString());
             if (starbasePlayerCargoHold && starbasePlayerCargoHold.cargoHoldTokens) {
                 let cargoHoldToken = starbasePlayerCargoHold.cargoHoldTokens.find(item => item.mint === input.mint.toString());
-                let amountCraftable = Math.floor(cargoHoldToken.amount / input.amount);
+                cargoHoldToken = cargoHoldToken ? cargoHoldToken : {mint: input.mint.toString()};
+                let amountCraftable = cargoHoldToken.amount ? Math.floor(cargoHoldToken.amount / input.amount) : 0;
                 starbasePlayerIngredientCargoHolds.push({starbasePlayerCargoHold: starbasePlayerCargoHold.starbasePlayerCargoHold, cargoHoldToken: cargoHoldToken, amountCraftable: amountCraftable, craftAmount: craftAmount});
             } else {
                 starbasePlayerIngredientCargoHolds.push({starbasePlayerCargoHold: null, cargoHoldToken: {mint: input.mint.toString()}, amountCraftable: 0, craftAmount: craftAmount});
@@ -4688,6 +4836,7 @@
     }
 
     async function getStarbaseTime(starbase, activity) {
+        const EMPTY_CRAFTING_SPEED_PER_TIER = [0, .2, .275, .35, .425, .5, .5];
         let currTime = Date.now() / 1000;
         let gameStateAcct = await sageProgram.account.gameState.fetch(sageGameAcct.account.gameState);
         let sbLevel = gameStateAcct.fleet.upkeep['level' + starbase.account.level];
@@ -4710,12 +4859,27 @@
         const resForLocalTimeDiff = minLocalTimeDiff * resDepletionRate;
         const resRemainingLocalTimeDiff = resAmount - resForLocalTimeDiff;
         const resRemainingLocalTimeDiffMin = resRemainingLocalTimeDiff < 0 ? 0 : resRemainingLocalTimeDiff;
-        return {starbaseTime: lastLocalUpdate + minLocalTimeDiff, resRemaining: resRemainingLocalTimeDiffMin};
+        const minUpkeepTimeRemaining = Math.min(minLocalTimeDiff, upkeepTimeRemaining);
+        const emptyAdjustment = minUpkeepTimeRemaining == upkeepTimeRemaining ? (timeSinceGlobalUpdate - minUpkeepTimeRemaining) * EMPTY_CRAFTING_SPEED_PER_TIER[starbase.account.level] : 0;
+        let starbaseTime = activity === 'Craft' ? lastLocalUpdate + minLocalTimeDiff + emptyAdjustment : lastLocalUpdate + minLocalTimeDiff;
+        return {starbaseTime: starbaseTime, resRemaining: resRemainingLocalTimeDiffMin};
+    }
+
+    async function updateCraft(userCraft) {
+        let craftSavedData = await GM.getValue(userCraft.label, '{}');
+        let craftParsedData = JSON.parse(craftSavedData);
+        craftParsedData.state = userCraft.state;
+        craftParsedData.craftingId = userCraft.craftingId;
+        await GM.setValue(userCraft.label, JSON.stringify(craftParsedData));
     }
 
     async function startCraft(userCraft) {
         if (!enableAssistant) return;
         try {
+            const EMPTY_CRAFTING_SPEED_PER_TIER = [0, .2, .275, .35, .425, .5, .5];
+            let craftSavedData = await GM.getValue(userCraft.label, '{}');
+            let craftParsedData = JSON.parse(craftSavedData);
+            userCraft = craftParsedData;
             updateFleetState(userCraft, userCraft.state);
             let targetX = userCraft.coordinates.split(',')[0].trim();
             let targetY = userCraft.coordinates.split(',')[1].trim();
@@ -4741,7 +4905,12 @@
             //let completeArr = completeBN.toTwos(64).toArrayLike(BrowserBuffer.Buffer.Buffer, "be", 2);
             //let complete58 = bs58.encode(completeArr);
 
-            if (craftingInstances.length < 1) updateFleetState(userCraft, 'Idle') && await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+            if (craftingInstances.length < 1) {
+                updateFleetState(userCraft, 'Idle');
+                userCraft.craftingId = 0;
+                await updateCraft(userCraft);
+                //await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+            }
 
             // Get all completed crafting processes at the designated Starbase
             let completedCraftingProcesses = [];
@@ -4772,6 +4941,10 @@
                     } else {
                         if (craftingProcess.account.endTime.toNumber() < upgradeTime.starbaseTime && [2,3].includes(craftingProcess.account.status)) {
                             completedUpgradeProcesses.push({craftingProcess: craftingProcess.publicKey, craftingInstance: craftingInstance.publicKey, recipe: craftingProcess.account.recipe, status: craftingProcess.account.status, craftingId: craftingProcess.account.craftingId.toNumber()});
+                        } else {
+                            let upgradeTimeDiff = Math.max(craftingProcess.account.endTime.toNumber() - upgradeTime.starbaseTime, 0);
+                            let upgradeTimeStr = upgradeTime.resRemaining > 0 ? TimeToStr(new Date(Date.now() + upgradeTimeDiff * 1000)) : 'Paused [' + parseInt(upgradeTimeDiff/60) + 'm remaining]';
+                            updateFleetState(userCraft, upgradeTimeStr);
                         }
                     }
                 }
@@ -4781,7 +4954,8 @@
                 cLog(1,`${FleetTimeStamp(userCraft.label)} Crafting process not found. Setting state to Idle.`);
                 updateFleetState(userCraft, 'Idle');
                 userCraft.craftingId = 0;
-                await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                await updateCraft(userCraft);
+                //await GM.setValue(userCraft.label, JSON.stringify(userCraft));
             }
 
             let starbasePlayerCargoHoldsAndTokens = await getStarbasePlayerCargoHolds(starbasePlayer);
@@ -4796,7 +4970,8 @@
                         if (userCraft.craftingId && craftingProcess.craftingId == userCraft.craftingId) {
                             updateFleetState(userCraft, 'Idle');
                             userCraft.craftingId = 0;
-                            await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                            await updateCraft(userCraft)
+                            //await GM.setValue(userCraft.label, JSON.stringify(userCraft));
                         }
                     }
                 }
@@ -4812,7 +4987,8 @@
                         if (userCraft.craftingId && upgradeProcess.craftingId == userCraft.craftingId) {
                             updateFleetState(userCraft, 'Idle');
                             userCraft.craftingId = 0;
-                            await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                            await updateCraft(userCraft);
+                            //await GM.setValue(userCraft.label, JSON.stringify(userCraft));
                         }
                     }
                 }
@@ -4838,11 +5014,16 @@
                 updateFleetState(userCraft, 'Craft Starting');
                 let result = await execStartCrafting(starbase, starbasePlayer, starbasePlayerCargoHoldsAndTokens, targetRecipe.craftRecipe, craftAmount, userCraft);
                 if (!userCraft.state.includes('ERROR')) {
+                    let activityType = craftRecipes.some(item => item.name === targetRecipe.craftRecipe.name) ? 'Crafting' : 'Upgrading';
                     let craftDuration = (targetRecipe.craftRecipe.duration * craftAmount) / userCraft.crew;
-                    let calcEndTime = Date.now() + craftDuration * 1000;
-                    updateFleetState(userCraft, 'Crafting [' + TimeToStr(new Date(calcEndTime)) + ']');
+                    let calcEndTime = TimeToStr(new Date(Date.now() + craftDuration * 1000));
+                    let upgradeTimeStr = upgradeTime.resRemaining > 0 ? calcEndTime : 'Paused';
+                    let craftTimeStr = craftTime.resRemaining > 0 ? calcEndTime : TimeToStr(new Date(Date.now() + ((craftDuration * 1000) / EMPTY_CRAFTING_SPEED_PER_TIER[starbase.account.level])));
+                    let activityTimeStr = activityType == 'Crafting' ? craftTimeStr : upgradeTimeStr;
+                    updateFleetState(userCraft, activityType + ' [' + activityTimeStr + ']');
                     userCraft.craftingId = result.craftingId;
-                    await GM.setValue(userCraft.label, JSON.stringify(userCraft));
+                    await updateCraft(userCraft);
+                    //await GM.setValue(userCraft.label, JSON.stringify(userCraft));
                 }
             }
         }
@@ -4866,7 +5047,7 @@
 			setTimeout(() => { startFleet(i);	}, 500 * (i + 1));
 		}
 
-        for (let i=1; i < 5; i++) {
+        for (let i=1; i < globalSettings.craftingJobs+1; i++) {
             let craftSavedData = await GM.getValue('craft' + i, '{}');
             let craftParsedData = JSON.parse(craftSavedData);
             if (craftParsedData.item && craftParsedData.coordinates) startCraft(craftParsedData);
@@ -5231,7 +5412,7 @@
 			settingsModal.style.display = 'none';
 			let settingsModalContent = document.createElement('div');
 			settingsModalContent.classList.add('assist-modal-content');
-			settingsModalContent.innerHTML = '<div class="assist-modal-header"> <img src="' + iconStr + '" /> <span style="padding-left: 15px;">SLY Assistant v' + GM_info.script.version + '</span> <div class="assist-modal-header-right"> <button class=" assist-modal-btn assist-modal-save">Save</button> <span class="assist-modal-close">x</span> </div></div><div class="assist-modal-body"> <span id="settings-modal-error"></span> <div id="settings-modal-header">Global Settings</div> <div>Priority Fee <input id="priorityFee" type="number" min="0" max="100000000" placeholder="1" ></input> <span>Added to each transaction. Set to 0 (zero) to disable. 1 Lamport = 0.000000001 SOL</span> </div> <div>Low Priority Fee % <input id="lowPriorityFeeMultiplier" type="range" min="0" max="100" value="10" step="10"></input> <span>Percentage above priority fees that should be used for smaller transactions</span> </div> <div>Save profile selection? <input id="saveProfile" type="checkbox"></input> <span>Should the profile selection be saved (uncheck to select a different profile each time)?</span> </div> <div>Tx Poll Delay <input id="confirmationCheckingDelay" type="number" min="200" max="10000" placeholder="200"></input> <span>How many milliseconds to wait before re-reading the chain for confirmation</span> </div> <div>Console Logging <input id="debugLogLevel" type="number" min="0" max="9" placeholder="3"></input> <span>How much console logging you want to see (higher number = more, 0 = none)</span> </div> <div>Use Ammo Banks for Transport? <input id="transportUseAmmoBank" type="checkbox"></input> <span>Should transports also use their ammo banks to help move ammo?</span> </div> <div>Stop Transports On Error <input id="transportStopOnError" type="checkbox"></input> <span>Should transport fleet stop completely if there is an error (example: not enough resource/fuel/etc.)?</span> </div> <div>Moving Scan Pattern <select id="scanBlockPattern"> <option value="square">square</option> <option value="ring">ring</option> <option value="spiral">spiral</option> <option value="up">up</option> <option value="down">down</option> <option value="left">left</option> <option value="right">right</option> <option value="sly">sly</option> </select> <span>Only applies to fleets set to Move While Scanning</span> </div> <div>Scan Block Length <input id="scanBlockLength" type="number" min="2" max="50" placeholder="5"></input> <span>How far fleets should go for the up, down, left and right scanning patterns</span> </div> <div>Scan Block Resets After Resupply? <input id="scanBlockResetAfterResupply" type="checkbox"></input> <span>Start from the beginning of the pattern after resupplying at starbase?</span> </div> <div>Scan Resupply On Low Fuel? <input id="scanResupplyOnLowFuel" type="checkbox"></input> <span>Do scanning fleets set to Move While Scanning return to base to resupply when fuel is too low to move?</span> </div> <div>Scan Sector Regeneration Delay <input id="scanSectorRegenTime" type="number" min="0" placeholder="90"></input> <span>Number of seconds to wait after finding SDU</span> </div> <div>Scan Pause Time <input id="scanPauseTime" type="number" min="240" max="6000" placeholder="600"></input> <span>Number of seconds to wait when sectors probabilities are too low</span> </div> <div>Scan Strike Count <input id="scanStrikeCount" type="number" min="1" max="10" placeholder="3"></input> <span>Number of low % scans before moving on or pausing</span> </div> <div>Status Panel Opacity <input id="statusPanelOpacity" type="range" min="1" max="100" value="75"></input> <span>(requires page refresh)</span> </div> <div>---</div> <div>Advanced Settings</div> <div>Auto Start Script <input id="autoStartScript" type="checkbox"></input> <span>Should Lab Assistant automatically start after initialization is complete?</span> </div> <div>Reload On Stuck Fleets <input id="reloadPageOnFailedFleets" type="number" min="0" max="999" placeholder="0"></input> <span>Automatically refresh the page if this many fleets get stuck (0 = never)</span> </div></div>';
+			settingsModalContent.innerHTML = '<div class="assist-modal-header"> <img src="' + iconStr + '" /> <span style="padding-left: 15px;">SLY Assistant v' + GM_info.script.version + '</span> <div class="assist-modal-header-right"> <button class=" assist-modal-btn assist-modal-save">Save</button> <span class="assist-modal-close">x</span> </div></div><div class="assist-modal-body"> <span id="settings-modal-error"></span> <div id="settings-modal-header">Global Settings</div> <div>Priority Fee <input id="priorityFee" type="number" min="0" max="100000000" placeholder="1" ></input> <span>Added to each transaction. Set to 0 (zero) to disable. 1 Lamport = 0.000000001 SOL</span> </div> <div>Low Priority Fee % <input id="lowPriorityFeeMultiplier" type="range" min="0" max="100" value="10" step="10"></input> <span>Percentage above priority fees that should be used for smaller transactions</span> </div> <div>Save profile selection? <input id="saveProfile" type="checkbox"></input> <span>Should the profile selection be saved (uncheck to select a different profile each time)?</span> </div> <div>Tx Poll Delay <input id="confirmationCheckingDelay" type="number" min="200" max="10000" placeholder="200"></input> <span>How many milliseconds to wait before re-reading the chain for confirmation</span> </div> <div>Console Logging <input id="debugLogLevel" type="number" min="0" max="9" placeholder="3"></input> <span>How much console logging you want to see (higher number = more, 0 = none)</span> </div> <div>Crafting Jobs <input id="craftingJobs" type="number" min="0" max="100" placeholder="4"></input> <span>How many crafting jobs should be enabled?</span> </div> <div>Subwarp for short distances? <input id="subwarpShortDist" type="checkbox"></input> <span>Should fleets subwarp when travel distance is 1 diagonal square or less?</span> </div> <div>Use Ammo Banks for Transport? <input id="transportUseAmmoBank" type="checkbox"></input> <span>Should transports also use their ammo banks to help move ammo?</span> </div> <div>Stop Transports On Error <input id="transportStopOnError" type="checkbox"></input> <span>Should transport fleet stop completely if there is an error (example: not enough resource/fuel/etc.)?</span> </div> <div>Moving Scan Pattern <select id="scanBlockPattern"> <option value="square">square</option> <option value="ring">ring</option> <option value="spiral">spiral</option> <option value="up">up</option> <option value="down">down</option> <option value="left">left</option> <option value="right">right</option> <option value="sly">sly</option> </select> <span>Only applies to fleets set to Move While Scanning</span> </div> <div>Scan Block Length <input id="scanBlockLength" type="number" min="2" max="50" placeholder="5"></input> <span>How far fleets should go for the up, down, left and right scanning patterns</span> </div> <div>Scan Block Resets After Resupply? <input id="scanBlockResetAfterResupply" type="checkbox"></input> <span>Start from the beginning of the pattern after resupplying at starbase?</span> </div> <div>Scan Resupply On Low Fuel? <input id="scanResupplyOnLowFuel" type="checkbox"></input> <span>Do scanning fleets set to Move While Scanning return to base to resupply when fuel is too low to move?</span> </div> <div>Scan Sector Regeneration Delay <input id="scanSectorRegenTime" type="number" min="0" placeholder="90"></input> <span>Number of seconds to wait after finding SDU</span> </div> <div>Scan Pause Time <input id="scanPauseTime" type="number" min="240" max="6000" placeholder="600"></input> <span>Number of seconds to wait when sectors probabilities are too low</span> </div> <div>Scan Strike Count <input id="scanStrikeCount" type="number" min="1" max="10" placeholder="3"></input> <span>Number of low % scans before moving on or pausing</span> </div> <div>Status Panel Opacity <input id="statusPanelOpacity" type="range" min="1" max="100" value="75"></input> <span>(requires page refresh)</span> </div> <div>---</div> <div>Advanced Settings</div> <div>Auto Start Script <input id="autoStartScript" type="checkbox"></input> <span>Should Lab Assistant automatically start after initialization is complete?</span> </div> <div>Reload On Stuck Fleets <input id="reloadPageOnFailedFleets" type="number" min="0" max="999" placeholder="0"></input> <span>Automatically refresh the page if this many fleets get stuck (0 = never)</span> </div></div>';
 			settingsModal.append(settingsModalContent);
 
 			let importModal = document.createElement('div');
