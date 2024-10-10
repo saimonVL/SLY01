@@ -2011,7 +2011,7 @@
 
             let txResult = await txSignAndSend(tx2, fleet, 'STOP MINING');
 
-            //await wait(2000);
+            await wait(3000);
             cLog(1,`${FleetTimeStamp(fleet.label)} Idle 💤`);
             updateFleetState(fleet, 'Idle');
 
